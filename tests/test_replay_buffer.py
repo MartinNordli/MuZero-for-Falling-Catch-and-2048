@@ -1,7 +1,7 @@
 import numpy as np
 
 from falling_muzero.config import GameConfig
-from falling_muzero.game import FallingCatchGame
+from falling_muzero.games.falling_catch import FallingCatchGame
 from falling_muzero.replay_buffer import Episode, EpisodeBuffer
 
 
@@ -27,3 +27,48 @@ def test_episode_buffer_samples_bptt_targets():
     assert batch.target_policies.shape == (2, 3, 3)
     assert batch.target_values.shape == (2, 3)
     assert batch.masks.shape == (2, 3)
+
+
+def test_episode_buffer_prioritizes_high_reward_episodes():
+    low = Episode()
+    high = Episode()
+    observation = np.zeros((2, 2, 2), dtype=np.float32)
+    policy = np.ones(3, dtype=np.float32) / 3
+    low.append(observation, action=0, reward=1.0, policy=policy, search_value=0.0)
+    high.append(observation, action=0, reward=10.0, policy=policy, search_value=0.0)
+
+    buffer = EpisodeBuffer(capacity=10, discount=0.95, seed=1, priority_alpha=1.0)
+    buffer.add(low)
+    buffer.add(high)
+
+    assert buffer._priorities[1] > buffer._priorities[0]
+
+
+def test_episode_buffer_blends_returns_with_real_mcts_search_values():
+    observation = np.zeros((2, 2, 2), dtype=np.float32)
+    policy = np.ones(3, dtype=np.float32) / 3
+    episode = Episode()
+    episode.append(
+        observation,
+        action=0,
+        reward=2.0,
+        policy=policy,
+        search_value=10.0,
+        has_search_value=True,
+    )
+    buffer = EpisodeBuffer(capacity=10, discount=1.0, search_value_target_weight=0.25)
+    buffer.add(episode)
+
+    assert np.isclose(buffer._target_value(buffer.episodes[0], 0), 4.0)
+
+    no_search = Episode()
+    no_search.append(
+        observation,
+        action=0,
+        reward=2.0,
+        policy=policy,
+        search_value=10.0,
+        has_search_value=False,
+    )
+    buffer.add(no_search)
+    assert np.isclose(buffer._target_value(buffer.episodes[1], 0), 2.0)

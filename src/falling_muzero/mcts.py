@@ -57,17 +57,29 @@ class MuZeroMCTS:
         self.device = device
         self.rng = np.random.default_rng(seed)
 
-    def search(self, observation_stack: np.ndarray, add_exploration_noise: bool = True) -> SearchResult:
+    def search(
+        self,
+        observation_stack: np.ndarray,
+        add_exploration_noise: bool = True,
+        legal_actions: tuple[int, ...] | None = None,
+    ) -> SearchResult:
         self.network.eval()
         with torch.no_grad():
             observation = torch.as_tensor(observation_stack, dtype=torch.float32, device=self.device).unsqueeze(0)
             initial = self.network.initial_inference(observation)
             root = Node(prior=1.0, latent=initial.latent[0].detach(), reward=0.0)
-            self._expand(root, initial.policy_logits[0], add_exploration_noise=add_exploration_noise)
+            self._expand(
+                root,
+                initial.policy_logits[0],
+                add_exploration_noise=add_exploration_noise,
+                actions=legal_actions,
+            )
             root.value_sum = float(initial.value.item())
             root.visit_count = 1
 
             for _ in range(self.config.simulations):
+                if not root.children:
+                    break
                 node = root
                 search_path = [node]
                 depth = 0
@@ -83,7 +95,10 @@ class MuZeroMCTS:
                     self._expand(node, policy_logits, add_exploration_noise=False)
                 self._backpropagate(search_path, float(value.item()))
 
-        visits = np.array([root.children[action].visit_count for action in range(self.action_space_size)], dtype=np.float32)
+        visits = np.array(
+            [root.children[action].visit_count if action in root.children else 0 for action in range(self.action_space_size)],
+            dtype=np.float32,
+        )
         if visits.sum() == 0:
             policy = np.ones(self.action_space_size, dtype=np.float32) / self.action_space_size
         else:
@@ -95,14 +110,35 @@ class MuZeroMCTS:
                 policy = adjusted / adjusted.sum()
         return SearchResult(policy=policy.astype(np.float32), value=root.value, root=root)
 
-    def _expand(self, node: Node, policy_logits: torch.Tensor, add_exploration_noise: bool) -> None:
-        priors = F.softmax(policy_logits, dim=-1).detach().cpu().numpy().astype(np.float64)
-        if add_exploration_noise:
-            noise = self.rng.dirichlet([self.config.dirichlet_alpha] * self.action_space_size)
-            priors = (1.0 - self.config.exploration_fraction) * priors + self.config.exploration_fraction * noise
-        priors = priors / priors.sum()
+    def _expand(
+        self,
+        node: Node,
+        policy_logits: torch.Tensor,
+        add_exploration_noise: bool,
+        actions: tuple[int, ...] | None = None,
+    ) -> None:
+        active_actions = tuple(range(self.action_space_size)) if actions is None else tuple(actions)
+        if not active_actions:
+            return
 
-        for action in range(self.action_space_size):
+        priors = F.softmax(policy_logits, dim=-1).detach().cpu().numpy().astype(np.float64)
+        masked_priors = np.zeros_like(priors)
+        for action in active_actions:
+            masked_priors[action] = priors[action]
+        if masked_priors.sum() <= 1e-12:
+            for action in active_actions:
+                masked_priors[action] = 1.0
+        priors = masked_priors / masked_priors.sum()
+
+        if add_exploration_noise:
+            noise_values = self.rng.dirichlet([self.config.dirichlet_alpha] * len(active_actions))
+            noise = np.zeros_like(priors)
+            for action, value in zip(active_actions, noise_values, strict=False):
+                noise[action] = value
+            priors = (1.0 - self.config.exploration_fraction) * priors + self.config.exploration_fraction * noise
+            priors = priors / priors.sum()
+
+        for action in active_actions:
             action_tensor = torch.tensor([action], dtype=torch.long, device=self.device)
             recurrent = self.network.recurrent_inference(node.latent.unsqueeze(0), action_tensor)
             node.children[action] = Node(
@@ -122,7 +158,8 @@ class MuZeroMCTS:
         pb_c = math.log((parent.visit_count + self.config.pb_c_base + 1) / self.config.pb_c_base)
         pb_c += self.config.pb_c_init
         pb_c *= math.sqrt(parent.visit_count) / (child.visit_count + 1)
-        return child.value + pb_c * child.prior
+        q_value = child.reward + self.discount * child.value
+        return q_value + pb_c * child.prior
 
     def _backpropagate(self, search_path: list[Node], value: float) -> None:
         for node in reversed(search_path):

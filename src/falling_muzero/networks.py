@@ -21,14 +21,29 @@ class RepresentationNetwork(nn.Module):
     def __init__(self, input_shape: tuple[int, int, int], config: NetworkConfig):
         super().__init__()
         channels, height, width = input_shape
-        input_size = channels * height * width
-        self.model = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(input_size, config.hidden_dim),
-            nn.ReLU(),
-            nn.Linear(config.hidden_dim, config.latent_dim),
-            nn.Tanh(),
-        )
+        if config.architecture == "mlp":
+            input_size = channels * height * width
+            self.model = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(input_size, config.hidden_dim),
+                nn.ReLU(),
+                nn.Linear(config.hidden_dim, config.latent_dim),
+                nn.Tanh(),
+            )
+        elif config.architecture == "conv":
+            self.model = nn.Sequential(
+                nn.Conv2d(channels, 16, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.Conv2d(16, 32, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.Flatten(),
+                nn.Linear(32 * height * width, config.hidden_dim),
+                nn.ReLU(),
+                nn.Linear(config.hidden_dim, config.latent_dim),
+                nn.Tanh(),
+            )
+        else:
+            raise ValueError("network.architecture must be 'mlp' or 'conv'")
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         return self.model(observations)

@@ -1,0 +1,59 @@
+game:
+  kind: "2048"
+  size: 4
+  episode_length: 1200
+  history_length: 4
+  spawn_seed: 11
+  max_tile_exponent: 11
+  invalid_move_penalty: -0.15
+  merge_reward_scale: 128.0
+  heuristic_search_depth: 2
+
+network:
+  architecture: "conv"
+  latent_dim: 96
+  hidden_dim: 160
+
+mcts:
+  simulations: 20
+  max_depth: 1
+  pb_c_base: 19652
+  pb_c_init: 0.05
+  dirichlet_alpha: 0.25
+  exploration_fraction: 0.15
+  temperature: 0.5
+
+training:
+  seed: 13
+  episodes: 400
+  bootstrap_episodes: 40
+  bootstrap_imitation_steps: 0
+  bootstrap_gradient_steps: 120
+  bootstrap_policy: "random"
+  train_after_episodes: 4
+  train_every: 1
+  gradient_steps: 4
+  batch_size: 64
+  buffer_size: 900
+  replay_priority_alpha: 0.8
+  replay_priority_epsilon: 0.001
+  unroll_steps: 5
+  discount: 0.98
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  value_loss_weight: 0.5
+  reward_loss_weight: 1.0
+  policy_loss_weight: 2.0
+  search_value_target_weight: 0.5
+  gradient_clip: 5.0
+  eval_every: 25
+  eval_episodes: 5
+  mcts_eval_episodes: 1
+  checkpoint_path: "artifacts/2048/checkpoints/best.pt"
+  final_checkpoint_path: "artifacts/2048/checkpoints/final.pt"
+  metrics_path: "artifacts/2048/results/training_metrics.json"
+
+visualization:
+  plots_dir: "artifacts/2048/plots"
+  demo_dir: "artifacts/2048/demo"
+  render_frames: true

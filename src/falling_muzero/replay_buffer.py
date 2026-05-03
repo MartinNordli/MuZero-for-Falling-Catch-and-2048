@@ -5,7 +5,7 @@ from random import Random
 
 import numpy as np
 
-from falling_muzero.game import FallingCatchGame
+from falling_muzero.games.types import MuZeroGame
 
 
 @dataclass(slots=True)
@@ -15,6 +15,8 @@ class Episode:
     rewards: list[float] = field(default_factory=list)
     policies: list[np.ndarray] = field(default_factory=list)
     search_values: list[float] = field(default_factory=list)
+    search_value_masks: list[float] = field(default_factory=list)
+    heuristic_matches: list[float] = field(default_factory=list)
     returns: list[float] = field(default_factory=list)
 
     def append(
@@ -24,12 +26,17 @@ class Episode:
         reward: float,
         policy: np.ndarray,
         search_value: float,
+        has_search_value: bool = False,
+        heuristic_match: bool | None = None,
     ) -> None:
         self.observations.append(observation.astype(np.float32, copy=True))
         self.actions.append(int(action))
         self.rewards.append(float(reward))
         self.policies.append(policy.astype(np.float32, copy=True))
         self.search_values.append(float(search_value))
+        self.search_value_masks.append(1.0 if has_search_value else 0.0)
+        if heuristic_match is not None:
+            self.heuristic_matches.append(1.0 if heuristic_match else 0.0)
 
     def __len__(self) -> int:
         return len(self.actions)
@@ -54,12 +61,30 @@ class TrainingBatch:
 
 
 class EpisodeBuffer:
-    def __init__(self, capacity: int, discount: float, seed: int = 0):
+    def __init__(
+        self,
+        capacity: int,
+        discount: float,
+        seed: int = 0,
+        priority_alpha: float = 0.0,
+        priority_epsilon: float = 0.001,
+        search_value_target_weight: float = 0.5,
+    ):
         if capacity < 1:
             raise ValueError("capacity must be positive")
+        if priority_alpha < 0:
+            raise ValueError("priority_alpha must be non-negative")
+        if priority_epsilon <= 0:
+            raise ValueError("priority_epsilon must be positive")
+        if not 0.0 <= search_value_target_weight <= 1.0:
+            raise ValueError("search_value_target_weight must be in [0, 1]")
         self.capacity = capacity
         self.discount = discount
+        self.priority_alpha = priority_alpha
+        self.priority_epsilon = priority_epsilon
+        self.search_value_target_weight = search_value_target_weight
         self._episodes: list[Episode] = []
+        self._priorities: list[float] = []
         self._rng = Random(seed)
 
     def __len__(self) -> int:
@@ -74,8 +99,10 @@ class EpisodeBuffer:
             return
         episode.finalize_returns(self.discount)
         self._episodes.append(episode)
+        self._priorities.append(self._episode_priority(episode))
         if len(self._episodes) > self.capacity:
             self._episodes = self._episodes[-self.capacity :]
+            self._priorities = self._priorities[-self.capacity :]
 
     def can_sample(self, batch_size: int) -> bool:
         return bool(self._episodes) and sum(len(episode) for episode in self._episodes) >= batch_size
@@ -84,7 +111,7 @@ class EpisodeBuffer:
         self,
         batch_size: int,
         unroll_steps: int,
-        game: FallingCatchGame,
+        game: MuZeroGame,
     ) -> TrainingBatch:
         if not self.can_sample(batch_size):
             raise ValueError("not enough data in episode buffer")
@@ -100,7 +127,7 @@ class EpisodeBuffer:
         zero_policy = np.ones(action_space, dtype=np.float32) / action_space
 
         for _ in range(batch_size):
-            episode = self._rng.choice(self._episodes)
+            episode = self._sample_episode()
             start = self._rng.randrange(len(episode))
             obs_batch.append(game.stack_observations(episode.observations, start))
 
@@ -114,7 +141,7 @@ class EpisodeBuffer:
                 target_index = start + offset
                 if target_index < len(episode):
                     policies.append(episode.policies[target_index])
-                    values.append(episode.returns[target_index])
+                    values.append(self._target_value(episode, target_index))
                     masks.append(1.0)
                 else:
                     policies.append(zero_policy)
@@ -143,3 +170,27 @@ class EpisodeBuffer:
             target_values=np.asarray(value_batch, dtype=np.float32),
             masks=np.asarray(mask_batch, dtype=np.float32),
         )
+
+    def _sample_episode(self) -> Episode:
+        if self.priority_alpha <= 0:
+            return self._rng.choice(self._episodes)
+        total = sum(self._priorities)
+        if total <= 0:
+            return self._rng.choice(self._episodes)
+        return self._rng.choices(self._episodes, weights=self._priorities, k=1)[0]
+
+    def _episode_priority(self, episode: Episode) -> float:
+        if self.priority_alpha <= 0:
+            return 1.0
+        reward_sum = max(0.0, sum(episode.rewards))
+        return float((reward_sum + self.priority_epsilon) ** self.priority_alpha)
+
+    def _target_value(self, episode: Episode, index: int) -> float:
+        discounted_return = float(episode.returns[index])
+        if index >= len(episode.search_values) or index >= len(episode.search_value_masks):
+            return discounted_return
+        if episode.search_value_masks[index] <= 0.0:
+            return discounted_return
+        weight = self.search_value_target_weight
+        search_value = float(episode.search_values[index])
+        return float((1.0 - weight) * discounted_return + weight * search_value)

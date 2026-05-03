@@ -1,0 +1,60 @@
+game:
+  kind: "catch"
+  width: 5
+  height: 5
+  paddle_width: 1
+  episode_length: 40
+  catch_reward: 1.0
+  miss_reward: -1.0
+  distance_shaping: 0.03
+  spawn_seed: 2
+  history_length: 4
+
+network:
+  architecture: "conv"
+  latent_dim: 64
+  hidden_dim: 128
+
+mcts:
+  simulations: 50
+  max_depth: 1
+  pb_c_base: 19652
+  pb_c_init: 0.05
+  dirichlet_alpha: 0.3
+  exploration_fraction: 0.1
+  temperature: 0.5
+
+training:
+  seed: 7
+  episodes: 400
+  bootstrap_episodes: 60
+  bootstrap_gradient_steps: 160
+  bootstrap_imitation_steps: 0
+  bootstrap_policy: "random"
+  train_after_episodes: 4
+  train_every: 1
+  gradient_steps: 8
+  batch_size: 32
+  buffer_size: 500
+  replay_priority_alpha: 0.8
+  replay_priority_epsilon: 0.001
+  unroll_steps: 4
+  discount: 0.95
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  value_loss_weight: 0.5
+  reward_loss_weight: 1.0
+  policy_loss_weight: 2.0
+  search_value_target_weight: 0.5
+  gradient_clip: 5.0
+  eval_every: 20
+  eval_episodes: 20
+  mcts_eval_episodes: 5
+  checkpoint_path: "artifacts/catch_no_heuristic/checkpoints/best.pt"
+  final_checkpoint_path: "artifacts/catch_no_heuristic/checkpoints/final.pt"
+  metrics_path: "artifacts/catch_no_heuristic/results/training_metrics.json"
+
+visualization:
+  plots_dir: "artifacts/catch_no_heuristic/plots"
+  demo_dir: "artifacts/catch_no_heuristic/demo"
+  render_frames: true

@@ -9,6 +9,7 @@ import yaml
 
 @dataclass(slots=True)
 class GameConfig:
+    kind: str = "catch"
     width: int = 5
     height: int = 5
     paddle_width: int = 1
@@ -18,10 +19,16 @@ class GameConfig:
     distance_shaping: float = 0.03
     spawn_seed: int = 2
     history_length: int = 4
+    size: int = 4
+    max_tile_exponent: int = 11
+    invalid_move_penalty: float = -0.2
+    merge_reward_scale: float = 100.0
+    heuristic_search_depth: int = 1
 
 
 @dataclass(slots=True)
 class NetworkConfig:
+    architecture: str = "conv"
     latent_dim: int = 64
     hidden_dim: int = 128
 
@@ -42,6 +49,7 @@ class TrainingConfig:
     seed: int = 7
     episodes: int = 120
     bootstrap_episodes: int = 20
+    bootstrap_imitation_steps: int = 0
     bootstrap_gradient_steps: int = 80
     bootstrap_policy: str = "heuristic"
     train_after_episodes: int = 4
@@ -49,6 +57,8 @@ class TrainingConfig:
     gradient_steps: int = 8
     batch_size: int = 32
     buffer_size: int = 500
+    replay_priority_alpha: float = 0.0
+    replay_priority_epsilon: float = 0.001
     unroll_steps: int = 4
     discount: float = 0.95
     learning_rate: float = 0.001
@@ -56,9 +66,11 @@ class TrainingConfig:
     value_loss_weight: float = 0.5
     reward_loss_weight: float = 1.0
     policy_loss_weight: float = 1.0
+    search_value_target_weight: float = 0.5
     gradient_clip: float = 5.0
     eval_every: int = 20
     eval_episodes: int = 20
+    mcts_eval_episodes: int = 0
     checkpoint_path: str = "artifacts/checkpoints/best.pt"
     final_checkpoint_path: str = "artifacts/checkpoints/final.pt"
     metrics_path: str = "artifacts/results/training_metrics.json"
