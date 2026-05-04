@@ -1,3 +1,5 @@
+"""Trinet output shapes and MCTS policy validity (sums to one, respects legal actions)."""
+
 import numpy as np
 import torch
 

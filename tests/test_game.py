@@ -1,3 +1,5 @@
+"""Falling Catch simulator: determinism, reward, heuristic, and observation-shape tests."""
+
 import numpy as np
 
 from falling_muzero.config import GameConfig

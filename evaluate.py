@@ -1,3 +1,5 @@
+"""Top-level entry point: evaluate a trained checkpoint or a non-learning baseline."""
+
 from __future__ import annotations
 
 from script_utils import run_cli_command

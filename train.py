@@ -1,3 +1,5 @@
+"""Top-level entry point: ``python train.py --game catch`` runs MuZero self-play training."""
+
 from __future__ import annotations
 
 from script_utils import run_cli_command

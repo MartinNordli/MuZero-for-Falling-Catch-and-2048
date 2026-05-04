@@ -1,3 +1,5 @@
+"""Deterministic 2048 simulator: merges, illegal moves, terminal detection, and MCTS integration."""
+
 import numpy as np
 
 from falling_muzero.config import GameConfig, MCTSConfig, NetworkConfig

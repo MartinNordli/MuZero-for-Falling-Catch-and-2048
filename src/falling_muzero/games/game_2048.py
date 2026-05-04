@@ -1,3 +1,17 @@
+"""Deterministic 4×4 2048 — the harder grid game extension.
+
+This is a stripped-down 2048: the board is a fixed-size grid of *exponents*
+(0 means empty, 1 means tile value 2, 2 means 4, …). Every move is one of
+the four swipes. After a successful swipe, a new tile spawns at a position
+chosen by a closed-form pseudo-random function of a counter, so the game
+remains deterministic and the MuZero search tree stays a normal action tree
+(no stochastic chance nodes are needed).
+
+Observations include one-hot tile planes plus a small set of metadata planes
+encoding step / spawn-count progress, which gives the learned dynamics model
+visibility into the deterministic spawn schedule.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +25,8 @@ from falling_muzero.games.types import StepResult
 
 @dataclass(frozen=True, slots=True)
 class Game2048State:
+    """Frozen 2048 state. ``board`` stores tile exponents (so ``2`` means a 4 tile)."""
+
     board: tuple[tuple[int, ...], ...]
     step: int
     spawn_count: int
@@ -95,6 +111,8 @@ class Game2048:
         return result
 
     def transition(self, state: Game2048State, action: int) -> StepResult:
+        """Pure functional step. Illegal swipes incur ``invalid_move_penalty`` and don't spawn a tile."""
+
         if action not in self.ACTIONS:
             raise ValueError(f"invalid action index {action}")
         if state.done:
@@ -145,6 +163,8 @@ class Game2048:
         return max(legal, key=lambda legal_action: float(policy[legal_action]))
 
     def observation(self, state: Game2048State | None = None) -> np.ndarray:
+        """One-hot tile planes (one per exponent up to ``max_tile_exponent``) + metadata planes."""
+
         active_state = self._state if state is None else state
         board = np.asarray(active_state.board, dtype=np.int16)
         channels, size, _ = self.observation_shape
@@ -158,6 +178,8 @@ class Game2048:
         return observation
 
     def stack_observations(self, observations: list[np.ndarray], index: int) -> np.ndarray:
+        """Concatenate the last ``history_length`` frames along the channel axis (zero-padded if early)."""
+
         channels, height, width = self.observation_shape
         frames: list[np.ndarray] = []
         for offset in range(self.config.history_length - 1, -1, -1):
@@ -169,6 +191,13 @@ class Game2048:
         return np.concatenate(frames, axis=0)
 
     def heuristic_action(self, state: Game2048State | None = None) -> int:
+        """Strong non-learning baseline. Falls back to a 1-ply look-ahead with the snake heuristic.
+
+        This heuristic is intentionally **not** used for the 2048 warm-start
+        (see ``configs/2048.yaml``) so a learned actor cannot trivially imitate
+        it — we keep it as an evaluation baseline only.
+        """
+
         active_state = self._state if state is None else state
         legal = self.legal_actions(active_state)
         if not legal:
@@ -246,6 +275,12 @@ class Game2048:
         return value
 
     def _evaluate_board(self, board: np.ndarray) -> float:
+        """Hand-tuned static evaluation: snake weighting + empties + max tile + smoothness + corner."""
+
+        # Standard 2048 heuristic combination: a weighted "snake" pattern that
+        # rewards keeping the largest tiles in one row, plus terms for free
+        # space, the maximum tile, smoothness between neighbouring tiles, and
+        # a corner bonus that further pins the largest tile to ``[0, 0]``.
         values = np.where(board > 0, 2.0**board, 0.0)
         weights = np.asarray(
             [
@@ -273,6 +308,8 @@ class Game2048:
         return snake_score + 200.0 * empty + 100.0 * max_tile + 5.0 * smoothness + corner_bonus
 
     def render_ascii(self, state: Game2048State | None = None) -> str:
+        """ASCII rendering used by tests and debug logs (tile values rendered, not exponents)."""
+
         active_state = self._state if state is None else state
         board = np.asarray(active_state.board, dtype=np.int16)
         rows = []
@@ -281,6 +318,8 @@ class Game2048:
         return "\n".join(rows)
 
     def board_from_observation(self, observation: np.ndarray) -> np.ndarray:
+        """Inverse of :meth:`observation`: recover the tile-exponent grid for visualisation."""
+
         frame_channels = self.observation_shape[0]
         tile_channels = self.tile_channel_count
         if observation.shape[0] >= frame_channels and observation.shape[0] % frame_channels == 0:
@@ -316,6 +355,11 @@ class Game2048:
         return result, spawn_count + 1
 
     def _move_board(self, board: np.ndarray, action: int) -> tuple[np.ndarray, bool, int]:
+        """Apply a single swipe. Returns ``(moved_board, did_move, merge_score)``."""
+
+        # All four swipes reduce to "merge each line, with optional reversal".
+        # Up/down operate on the transposed board (so we move along columns
+        # without rewriting the merge code).
         if action == 0:
             oriented = board.T
             lines = [oriented[col, :] for col in range(self.config.size)]
@@ -345,6 +389,8 @@ class Game2048:
         return moved_board.astype(np.int16), bool(not np.array_equal(board, moved_board)), merge_score
 
     def _merge_line(self, line: np.ndarray) -> tuple[np.ndarray, int]:
+        """Compress one row, merging adjacent equal tiles once each. Returns ``(new_line, merge_score)``."""
+
         nonzero = [int(value) for value in line if value != 0]
         output: list[int] = []
         score = 0

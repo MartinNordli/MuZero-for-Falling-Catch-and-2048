@@ -1,3 +1,10 @@
+"""Single dispatch point that turns a ``GameConfig.kind`` into a concrete simulator.
+
+Keeping the dispatch in one place is what lets the trainer / MCTS / replay
+buffer stay game-agnostic: they only depend on the shared ``MuZeroGame``
+Protocol from :mod:`falling_muzero.games.types`.
+"""
+
 from __future__ import annotations
 
 from typing import TypeAlias
@@ -11,6 +18,8 @@ GameType: TypeAlias = FallingCatchGame | Game2048
 
 
 def create_game(config: GameConfig) -> GameType:
+    """Return the simulator matching ``config.kind`` (``"catch"`` or ``"2048"``)."""
+
     if config.kind == "catch":
         return FallingCatchGame(config)
     if config.kind == "2048":

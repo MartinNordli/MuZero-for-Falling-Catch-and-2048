@@ -1,3 +1,13 @@
+"""Falling Catch — a 5×5 deterministic grid arcade environment.
+
+A red object spawns at the top of the grid and falls one row per timestep. A
+blue paddle on the bottom row moves left, stays, or moves right. Catching the
+object yields ``catch_reward``; missing yields ``miss_reward``; a small
+``distance_shaping`` term keeps short CPU training runs informative. The spawn
+schedule is fully deterministic (``spawn_column`` derives from a closed-form
+function of a counter), so the same seed produces the same evaluation game.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -99,6 +109,8 @@ class FallingCatchGame:
         return result
 
     def transition(self, state: GameState, action: int) -> StepResult:
+        """Pure functional step: ``(state, action)`` -> ``StepResult`` for the next state."""
+
         if action not in range(self.action_space_size):
             raise ValueError(f"invalid action index {action}")
         if state.done:
@@ -146,6 +158,8 @@ class FallingCatchGame:
         )
 
     def observation(self, state: GameState | None = None) -> np.ndarray:
+        """Two-channel ``(C=2, H, W)`` tensor — channel 0 is the ball, channel 1 is the paddle."""
+
         active_state = self._state if state is None else state
         grid = np.zeros(self.observation_shape, dtype=np.float32)
         if not active_state.done:
@@ -184,6 +198,8 @@ class FallingCatchGame:
         return 1
 
     def render_ascii(self, state: GameState | None = None) -> str:
+        """ASCII rendering used by tests and debug logs (``o`` = ball, ``=`` = paddle)."""
+
         active_state = self._state if state is None else state
         rows: list[str] = []
         for row in range(self.config.height):
@@ -199,6 +215,8 @@ class FallingCatchGame:
         return "\n".join(rows)
 
     def _distance_shaping(self, ball_col: int, paddle_left: int) -> float:
+        """Small dense reward that grows the closer the paddle is to the ball column."""
+
         if self.config.distance_shaping == 0:
             return 0.0
         paddle_center = paddle_left + (self.config.paddle_width - 1) / 2.0

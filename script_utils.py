@@ -1,3 +1,16 @@
+"""Shared dispatch layer for the top-level wrapper scripts.
+
+``train.py``, ``evaluate.py``, ``demo.py``, ``plot.py`` and ``smoke_test.py``
+all delegate here. The wrapper scripts exist so users can run
+``python train.py --game catch`` from the project root without having to set
+``PYTHONPATH=src``.
+
+This module:
+1. prepends ``src/`` to ``sys.path`` so ``import falling_muzero`` works,
+2. resolves the ``--game`` shortcut into a YAML config path, and
+3. forwards the remaining flags to :mod:`falling_muzero.cli`.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -11,6 +24,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 
+# Shorthand mapping from the user-facing ``--game`` value to a YAML preset.
+# ``catch-no-heuristic`` is an alias because both spellings appear in the
+# READMEs and slide deck.
 GAME_CONFIGS = {
     "catch": "configs/default.yaml",
     "catch_no_heuristic": "configs/catch_no_heuristic.yaml",
@@ -42,6 +58,8 @@ def run_cli_command(command: str, argv: list[str] | None = None) -> int:
 
 
 def _build_parser(command: str) -> argparse.ArgumentParser:
+    """Build the small wrapper-level argument parser for ``command`` (one parser per top-level script)."""
+
     script_name = "smoke_test.py" if command == "smoke-test" else f"{command}.py"
     parser = argparse.ArgumentParser(prog=script_name)
     parser.add_argument(
@@ -76,6 +94,8 @@ def _build_parser(command: str) -> argparse.ArgumentParser:
 
 
 def _command_args(command: str, args: argparse.Namespace) -> list[str]:
+    """Convert the parsed wrapper args into the argv list expected by the package CLI."""
+
     if command == "train":
         output: list[str] = []
         if args.episodes is not None:

@@ -1,3 +1,16 @@
+"""The MuZero Trinet — representation, dynamics, and prediction networks.
+
+* **Representation** maps a stacked observation to an abstract latent vector.
+* **Dynamics** maps ``(latent, action)`` to ``(next_latent, predicted_reward)``
+  and is unrolled recurrently inside both MCTS and BPTT training.
+* **Prediction** reads a latent and produces a policy distribution and a
+  scalar value.
+
+Both an MLP and a small convolutional representation are supported; the conv
+variant is the project default because both games are gridded. Checkpoints are
+architecture-specific (the saved state dict is keyed by layer shape).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +24,8 @@ from falling_muzero.config import NetworkConfig
 
 @dataclass(slots=True)
 class NetworkOutput:
+    """One forward pass result: latent + policy logits + value (+ predicted reward)."""
+
     latent: torch.Tensor
     policy_logits: torch.Tensor
     value: torch.Tensor
@@ -18,6 +33,8 @@ class NetworkOutput:
 
 
 class RepresentationNetwork(nn.Module):
+    """Encodes a stacked observation tensor into a latent vector."""
+
     def __init__(self, input_shape: tuple[int, int, int], config: NetworkConfig):
         super().__init__()
         channels, height, width = input_shape
@@ -50,6 +67,8 @@ class RepresentationNetwork(nn.Module):
 
 
 class DynamicsNetwork(nn.Module):
+    """Predicts ``(next_latent, reward)`` from ``(latent, action)``."""
+
     def __init__(self, action_space_size: int, config: NetworkConfig):
         super().__init__()
         self.action_space_size = action_space_size
@@ -72,6 +91,8 @@ class DynamicsNetwork(nn.Module):
 
 
 class PredictionNetwork(nn.Module):
+    """Reads a latent and outputs (policy logits, scalar value)."""
+
     def __init__(self, action_space_size: int, config: NetworkConfig):
         super().__init__()
         self.trunk = nn.Sequential(
@@ -87,7 +108,16 @@ class PredictionNetwork(nn.Module):
 
 
 class MuZeroNetwork(nn.Module):
-    """The assignment's Trinet: representation, dynamics, and prediction."""
+    """The assignment's Trinet: representation, dynamics, and prediction.
+
+    Two inference paths are exposed:
+
+    * :meth:`initial_inference` is called once at the MCTS root and once per
+      training sample to encode the real observation.
+    * :meth:`recurrent_inference` is called for every simulated descent in MCTS
+      and for every BPTT unroll step to roll the dynamics forward in latent
+      space without touching the real simulator.
+    """
 
     def __init__(
         self,
@@ -101,26 +131,36 @@ class MuZeroNetwork(nn.Module):
         self.prediction = PredictionNetwork(action_space_size, config)
 
     def initial_inference(self, observations: torch.Tensor) -> NetworkOutput:
+        """Run representation + prediction on a real observation (no reward predicted)."""
+
         latent = self.representation(observations)
         policy_logits, value = self.prediction(latent)
         return NetworkOutput(latent=latent, policy_logits=policy_logits, value=value)
 
     def recurrent_inference(self, latent: torch.Tensor, actions: torch.Tensor) -> NetworkOutput:
+        """Step the learned dynamics by one action and re-predict (policy, value, reward)."""
+
         next_latent, reward = self.dynamics(latent, actions)
         policy_logits, value = self.prediction(next_latent)
         return NetworkOutput(latent=next_latent, policy_logits=policy_logits, value=value, reward=reward)
 
 
 def policy_loss(logits: torch.Tensor, target_policy: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Cross-entropy between predicted ``logits`` and the MCTS-improved ``target_policy``."""
+
     losses = -(target_policy * F.log_softmax(logits, dim=-1)).sum(dim=-1)
     return _masked_mean(losses, mask)
 
 
 def scalar_loss(prediction: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Masked MSE used for both reward and value heads during BPTT."""
+
     return _masked_mean(F.mse_loss(prediction, target, reduction="none"), mask)
 
 
 def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Mean over positions where ``mask`` is non-zero (avoids dividing by zero)."""
+
     masked = values * mask
     denominator = mask.sum().clamp_min(1.0)
     return masked.sum() / denominator

@@ -1,3 +1,5 @@
+"""Replay buffer: BPTT batch shapes, prioritised sampling, and search-value blending in target values."""
+
 import numpy as np
 
 from falling_muzero.config import GameConfig

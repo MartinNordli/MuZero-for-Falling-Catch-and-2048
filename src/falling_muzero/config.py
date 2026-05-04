@@ -1,3 +1,11 @@
+"""Typed configuration objects layered as dataclass defaults <- YAML <- runtime overrides.
+
+The whole project is parameterised through these dataclasses. ``load_config``
+deep-merges the dataclass defaults with the chosen YAML preset and any in-memory
+overrides supplied by the CLI, so a new experiment is one YAML file plus
+optional ``--episodes`` / ``--simulations`` flags.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,6 +17,8 @@ import yaml
 
 @dataclass(slots=True)
 class GameConfig:
+    """Owns the ``game:`` YAML section. Fields after ``history_length`` are 2048-only."""
+
     kind: str = "catch"
     width: int = 5
     height: int = 5
@@ -28,6 +38,8 @@ class GameConfig:
 
 @dataclass(slots=True)
 class NetworkConfig:
+    """Owns the ``network:`` YAML section. Trinet sizing and architecture choice."""
+
     architecture: str = "conv"
     latent_dim: int = 64
     hidden_dim: int = 128
@@ -35,6 +47,8 @@ class NetworkConfig:
 
 @dataclass(slots=True)
 class MCTSConfig:
+    """Owns the ``mcts:`` YAML section. PUCT constants and root-noise parameters."""
+
     simulations: int = 25
     max_depth: int = 5
     pb_c_base: float = 19652.0
@@ -46,6 +60,8 @@ class MCTSConfig:
 
 @dataclass(slots=True)
 class TrainingConfig:
+    """Owns the ``training:`` YAML section. Self-play, optimiser, replay, and I/O paths."""
+
     seed: int = 7
     episodes: int = 120
     bootstrap_episodes: int = 20
@@ -78,6 +94,8 @@ class TrainingConfig:
 
 @dataclass(slots=True)
 class VisualizationConfig:
+    """Owns the ``visualization:`` YAML section. Output directories for plots and GIFs."""
+
     plots_dir: str = "artifacts/plots"
     demo_dir: str = "artifacts/demo"
     render_frames: bool = True
@@ -85,6 +103,8 @@ class VisualizationConfig:
 
 @dataclass(slots=True)
 class AppConfig:
+    """Top-level configuration mirroring the YAML file structure."""
+
     game: GameConfig = field(default_factory=GameConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     mcts: MCTSConfig = field(default_factory=MCTSConfig)
@@ -93,6 +113,8 @@ class AppConfig:
 
 
 def _merge_dict(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge ``overrides`` into ``defaults`` (overrides win, dicts are merged)."""
+
     merged = dict(defaults)
     for key, value in overrides.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -103,6 +125,8 @@ def _merge_dict(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str
 
 
 def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
+    """Convert an ``AppConfig`` (or any nested dataclass) into a plain dict for merging."""
+
     return {
         field_name: _dataclass_to_dict(getattr(obj, field_name))
         if hasattr(getattr(obj, field_name), "__dataclass_fields__")
@@ -112,6 +136,8 @@ def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
 
 
 def _build_config(data: dict[str, Any]) -> AppConfig:
+    """Re-hydrate an ``AppConfig`` from a fully-merged plain dict."""
+
     return AppConfig(
         game=GameConfig(**data.get("game", {})),
         network=NetworkConfig(**data.get("network", {})),
@@ -122,7 +148,7 @@ def _build_config(data: dict[str, Any]) -> AppConfig:
 
 
 def load_config(path: str | Path = "configs/default.yaml", overrides: dict[str, Any] | None = None) -> AppConfig:
-    """Load the single project configuration file and optional in-memory overrides."""
+    """Load a YAML preset and overlay optional in-memory overrides on top of the dataclass defaults."""
 
     defaults = _dataclass_to_dict(AppConfig())
     config_path = Path(path)
@@ -136,6 +162,8 @@ def load_config(path: str | Path = "configs/default.yaml", overrides: dict[str, 
 
 
 def ensure_parent(path: str | Path) -> Path:
+    """Make sure the parent directory of ``path`` exists; return ``path`` as a ``Path``."""
+
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     return target

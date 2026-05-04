@@ -1,3 +1,10 @@
+# Falling Catch — headline experiment, no heuristic warm-start.
+#
+# Same game as the default preset but the warm-up is RANDOM, replay sampling
+# is reward-prioritised, and the search tree is shallow. The point is to show
+# that MuZero learns a real policy from random data, not just by copying the
+# hand-written heuristic. Outputs go to artifacts/catch_no_heuristic/.
+
 game:
   kind: "catch"
   width: 5
@@ -15,6 +22,9 @@ network:
   latent_dim: 64
   hidden_dim: 128
 
+# Search is shallow but wider — at depth 1 the network spends its budget
+# polling many root actions instead of compounding dynamics errors deeper
+# in the tree (CPU-friendly, also matches the assignment's u-MCTS spec).
 mcts:
   simulations: 50
   max_depth: 1
@@ -26,17 +36,17 @@ mcts:
 
 training:
   seed: 7
-  episodes: 400
-  bootstrap_episodes: 60
+  episodes: 400                         # more episodes than the warm-start preset
+  bootstrap_episodes: 60                # warm-up size
   bootstrap_gradient_steps: 160
   bootstrap_imitation_steps: 0
-  bootstrap_policy: "random"
+  bootstrap_policy: "random"            # *** the headline difference ***
   train_after_episodes: 4
   train_every: 1
   gradient_steps: 8
   batch_size: 32
   buffer_size: 500
-  replay_priority_alpha: 0.8
+  replay_priority_alpha: 0.8            # reward-weighted prioritised replay
   replay_priority_epsilon: 0.001
   unroll_steps: 4
   discount: 0.95

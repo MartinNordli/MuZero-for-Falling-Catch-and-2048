@@ -1,3 +1,22 @@
+"""End-to-end MuZero training, evaluation, and checkpoint orchestration.
+
+The trainer owns the four loop steps that the project description
+calls out:
+
+1. **Plan** — run u-MCTS at the current observation to get an improved policy
+   and a search value.
+2. **Act** — sample (or argmax) from that policy, step the real simulator.
+3. **Store** — append the transition (with policy and search value) to the
+   replay buffer.
+4. **Train** — sample a BPTT batch from the buffer and take ``gradient_steps``
+   AdamW steps, scoring the unrolled dynamics + prediction outputs against
+   the stored targets.
+
+After training, the actor — representation + prediction networks only — is
+extracted at evaluation time. ``run_episode(mode="actor")`` is the
+``no-search`` rollout the assignment requires.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -16,6 +35,12 @@ from falling_muzero.networks import MuZeroNetwork, policy_loss, scalar_loss
 from falling_muzero.replay_buffer import Episode, EpisodeBuffer
 
 PolicyMode = Literal["actor", "mcts", "random", "heuristic"]
+
+# ``self.metrics`` is a flat ``dict[str, list]`` whose keys are
+# ``f"{prefix}_{key}"``. ``STAT_PREFIXES`` are the contexts the same statistic
+# can be reported under (training rollouts, eval-mode rollouts, the
+# best-checkpoint snapshot); ``STAT_KEYS`` are the individual statistics
+# themselves. Plotting and JSON dumping just iterate over these.
 STAT_KEYS = (
     "reward",
     "score",
@@ -38,6 +63,13 @@ STAT_PREFIXES = (
 
 
 class Trainer:
+    """Owns the game, network, MCTS planner, replay buffer, and metrics.
+
+    A single ``Trainer`` instance is constructed per CLI invocation. It is
+    used for both training (``train``) and evaluation / checkpoint loading
+    (``load_trainer_with_checkpoint``).
+    """
+
     def __init__(self, config: AppConfig):
         self.config = config
         self.device = torch.device("cpu")
@@ -75,6 +107,8 @@ class Trainer:
         self.best_actor_stats: dict[str, float | None] | None = None
 
     def train(self) -> dict[str, list[float | int | None]]:
+        """Bootstrap the buffer, run ``training.episodes`` self-play episodes, and save the final checkpoint."""
+
         self._bootstrap_replay_buffer()
         for episode_index in range(1, self.config.training.episodes + 1):
             episode, reward = self.run_episode(mode="mcts", training=True)
@@ -125,6 +159,13 @@ class Trainer:
         training: bool = False,
         include_terminal_observation: bool = False,
     ) -> tuple[Episode, float]:
+        """Roll out one episode under ``mode`` and return ``(Episode, total_reward)``.
+
+        ``mode`` selects the policy: ``"mcts"`` is u-MCTS self-play (used during
+        training), ``"actor"`` is the no-search learned actor (used at
+        evaluation), and ``"random"`` / ``"heuristic"`` are baselines.
+        """
+
         observation = self.game.reset()
         observations = [observation]
         episode = Episode()
@@ -156,9 +197,13 @@ class Trainer:
         return episode, float(total_reward)
 
     def evaluate(self, mode: PolicyMode = "actor", episodes: int = 20) -> float:
+        """Return the mean episode reward over ``episodes`` rollouts."""
+
         return self.evaluate_stats(mode, episodes)["reward"]
 
     def evaluate_stats(self, mode: PolicyMode = "actor", episodes: int = 20) -> dict[str, float | None]:
+        """Mean of every per-episode statistic (reward, score, max tile, miss%, …)."""
+
         stats = []
         for _ in range(episodes):
             episode, reward = self.run_episode(mode=mode, training=False)
@@ -166,6 +211,8 @@ class Trainer:
         return self._mean_stats(stats)
 
     def save_checkpoint(self, path: str | Path) -> Path:
+        """Persist the network weights, optimiser state, full config, and metrics."""
+
         target = ensure_parent(path)
         torch.save(
             {
@@ -179,6 +226,8 @@ class Trainer:
         return target
 
     def load_checkpoint(self, path: str | Path) -> None:
+        """Restore weights, optimiser, and metrics. Raises if the checkpoint shape mismatches."""
+
         checkpoint = torch.load(path, map_location=self.device)
         try:
             self.network.load_state_dict(checkpoint["model_state"])
@@ -193,6 +242,8 @@ class Trainer:
             self.metrics = checkpoint["metrics"]
 
     def save_metrics(self, path: str | Path) -> Path:
+        """Dump ``self.metrics`` to ``path`` as pretty-printed JSON."""
+
         target = ensure_parent(path)
         with target.open("w", encoding="utf-8") as handle:
             json.dump(self.metrics, handle, indent=2)
@@ -204,6 +255,8 @@ class Trainer:
         observation_stack: np.ndarray,
         training: bool,
     ) -> tuple[int, np.ndarray, float, bool]:
+        """Run the policy named by ``mode`` and return ``(action, policy, value, has_search_value)``."""
+
         if mode == "random":
             policy = self._legal_uniform_policy()
             action = int(np.random.choice(self.game.action_space_size, p=policy))
@@ -232,12 +285,16 @@ class Trainer:
         raise ValueError(f"unknown policy mode {mode}")
 
     def _coerce_action(self, action: int, policy: np.ndarray | None = None) -> int:
+        """Delegate to the game's optional ``coerce_action`` (e.g. 2048 invalid-move handling)."""
+
         coerce = getattr(self.game, "coerce_action", None)
         if coerce is None:
             return action
         return int(coerce(action, policy))
 
     def _legal_uniform_policy(self) -> np.ndarray:
+        """Uniform distribution over the game's currently legal actions."""
+
         legal_actions = self.game.legal_actions()
         policy = np.zeros(self.game.action_space_size, dtype=np.float32)
         if not legal_actions:
@@ -248,6 +305,8 @@ class Trainer:
         return policy
 
     def _mask_policy_to_legal(self, policy: np.ndarray) -> np.ndarray:
+        """Zero illegal entries in ``policy`` and renormalise (uniform fallback if all are zero)."""
+
         legal_actions = self.game.legal_actions()
         if not legal_actions:
             return policy.astype(np.float32) / max(float(policy.sum()), 1e-8)
@@ -262,6 +321,8 @@ class Trainer:
         return masked / total
 
     def _actor_policy(self, observation_stack: np.ndarray) -> tuple[np.ndarray, float]:
+        """One forward pass through representation + prediction (no search)."""
+
         self.network.eval()
         with torch.no_grad():
             observation = torch.as_tensor(observation_stack, dtype=torch.float32, device=self.device).unsqueeze(0)
@@ -270,6 +331,8 @@ class Trainer:
             return policy / policy.sum(), float(output.value.item())
 
     def _run_gradient_steps(self) -> dict[str, float]:
+        """Take ``training.gradient_steps`` BPTT steps and return mean loss components."""
+
         totals = {"loss": 0.0, "policy_loss": 0.0, "value_loss": 0.0, "reward_loss": 0.0}
         for _ in range(self.config.training.gradient_steps):
             loss_info = self._train_step()
@@ -278,6 +341,8 @@ class Trainer:
         return {key: value / self.config.training.gradient_steps for key, value in totals.items()}
 
     def _run_fixed_gradient_steps(self, steps: int) -> dict[str, float]:
+        """Like ``_run_gradient_steps`` but with a fixed step count (used for the bootstrap warm-up)."""
+
         totals = {"loss": 0.0, "policy_loss": 0.0, "value_loss": 0.0, "reward_loss": 0.0}
         for _ in range(steps):
             loss_info = self._train_step()
@@ -287,6 +352,18 @@ class Trainer:
         return {key: value / denominator for key, value in totals.items()}
 
     def _bootstrap_replay_buffer(self) -> None:
+        """Fill the buffer with warm-up episodes (heuristic or random) before MuZero self-play.
+
+        The two warm-up regimes are:
+
+        * ``bootstrap_policy: heuristic`` — copy a few episodes from the
+          hand-written paddle-tracking heuristic. Fast and stable, but the
+          actor can simply inherit the heuristic's behaviour.
+        * ``bootstrap_policy: random`` — fill the buffer with random play.
+          Slower to converge but the cleanest evidence that MuZero learns
+          from non-heuristic data (the headline experiment).
+        """
+
         episodes = self.config.training.bootstrap_episodes
         if episodes <= 0:
             return
@@ -310,6 +387,14 @@ class Trainer:
         # heuristic bootstrap can be mistaken for a learned MuZero result.
 
     def _save_if_best(self, actor_stats: dict[str, float | None] | None) -> None:
+        """Snapshot the network whenever a new best evaluation reward is reached.
+
+        We track ``best.pt`` separately from ``final.pt`` because later
+        self-play updates can occasionally degrade an already-good policy —
+        the snapshot at the highest evaluation reward is usually the one we
+        actually want to ship.
+        """
+
         if actor_stats is None or actor_stats["reward"] is None:
             return
         if actor_stats["reward"] > self.best_actor_eval:
@@ -318,6 +403,8 @@ class Trainer:
             self.save_checkpoint(self.config.training.checkpoint_path)
 
     def _run_imitation_steps(self, steps: int) -> dict[str, float]:
+        """Optional supervised pretraining on the warm-up replay (no dynamics unroll)."""
+
         totals = {"loss": 0.0, "policy_loss": 0.0, "value_loss": 0.0}
         for _ in range(steps):
             loss_info = self._imitation_step()
@@ -327,6 +414,8 @@ class Trainer:
         return {key: value / denominator for key, value in totals.items()}
 
     def _imitation_step(self) -> dict[str, float]:
+        """Single supervised step on the warm-up data (representation + prediction only)."""
+
         self.network.train()
         observations: list[np.ndarray] = []
         target_policies: list[np.ndarray] = []
@@ -361,6 +450,16 @@ class Trainer:
         }
 
     def _train_step(self) -> dict[str, float]:
+        """One BPTT gradient step.
+
+        Samples a batch, runs ``initial_inference`` on the start observation,
+        then unrolls ``recurrent_inference`` across ``unroll_steps`` actions.
+        Every step contributes a policy / value / reward loss against the
+        stored targets; the three are weighted by the corresponding
+        ``*_loss_weight`` config fields, gradients are clipped, and AdamW
+        takes one step. This is the BPTT loop the assignment spec describes.
+        """
+
         self.network.train()
         batch = self.buffer.sample(
             batch_size=self.config.training.batch_size,
@@ -433,6 +532,8 @@ class Trainer:
         mcts_eval_stats: dict[str, float | None] | None,
         heuristic_eval_stats: dict[str, float | None] | None,
     ) -> None:
+        """Push one row of per-episode metrics across all tracked prefixes."""
+
         self.metrics["episode"].append(episode_index)
         self._append_stat_group("train", train_stats)
         self.metrics["loss"].append(loss_info["loss"])
@@ -446,6 +547,8 @@ class Trainer:
         self._append_stat_group("best_actor_eval", self.best_actor_stats)
 
     def _append_stat_group(self, prefix: str, stats: dict[str, float | None] | None) -> None:
+        """Append one ``stats`` dict under ``f"{prefix}_{key}"`` keys (or ``None`` if missing)."""
+
         for key in STAT_KEYS:
             metric_key = f"{prefix}_{key}"
             if metric_key not in self.metrics:
@@ -453,6 +556,8 @@ class Trainer:
             self.metrics[metric_key].append(None if stats is None else stats[key])
 
     def _episode_stats(self, episode: Episode, reward: float) -> dict[str, float | None]:
+        """Collect per-episode statistics for both Falling Catch and 2048 (game-specific fields are ``None`` otherwise)."""
+
         state = self.game.state
         score = float(getattr(state, "score", 0.0)) if hasattr(state, "score") else None
         max_tile: float | None = None
@@ -486,6 +591,8 @@ class Trainer:
         }
 
     def _mean_stats(self, stats: list[dict[str, float | None]]) -> dict[str, float | None]:
+        """Average each statistic across episodes, ignoring ``None`` entries."""
+
         means: dict[str, float | None] = {}
         for key in STAT_KEYS:
             values = [stat[key] for stat in stats if stat[key] is not None]
@@ -494,6 +601,8 @@ class Trainer:
 
     @staticmethod
     def _empty_metrics() -> dict[str, list[float | int | None]]:
+        """Initialise the flat metrics dictionary with one empty list per tracked key."""
+
         metrics: dict[str, list[float | int | None]] = {
             "episode": [],
             "loss": [],
@@ -508,12 +617,21 @@ class Trainer:
 
     @staticmethod
     def _set_seeds(seed: int) -> None:
+        """Seed Python ``random``, NumPy, and PyTorch CPU RNGs so runs are reproducible."""
+
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
 
 
 def load_trainer_with_checkpoint(config: AppConfig, checkpoint_path: str | Path | None = None) -> Trainer:
+    """Construct a Trainer and load the configured ``best`` checkpoint if it exists.
+
+    This is the entry point used by every CLI subcommand other than ``train``;
+    it returns a Trainer whose network weights are ready for evaluation, demo
+    rendering, or smoke testing.
+    """
+
     trainer = Trainer(config)
     path = checkpoint_path or config.training.checkpoint_path
     if Path(path).exists():

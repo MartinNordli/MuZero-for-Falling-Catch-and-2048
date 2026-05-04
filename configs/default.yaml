@@ -1,48 +1,59 @@
+# Falling Catch — assignment-ready baseline.
+#
+# Heuristic warm-start + 25-simulation MCTS over 120 self-play episodes.
+# This is the easy regime: the warm-up data already encodes "move toward the
+# ball", so the actor reaches the 9.17 ceiling quickly. Outputs go to
+# artifacts/{checkpoints,results,plots,demo}/.
+
+# Game environment.
 game:
   kind: "catch"
   width: 5
   height: 5
   paddle_width: 1
-  episode_length: 40
+  episode_length: 40        # 40 timesteps == 8 catch opportunities
   catch_reward: 1.0
   miss_reward: -1.0
-  distance_shaping: 0.03
-  spawn_seed: 2
-  history_length: 4
+  distance_shaping: 0.03    # small dense reward; keeps short runs informative
+  spawn_seed: 2             # deterministic spawn schedule
+  history_length: 4         # number of stacked frames in the observation
 
+# Trinet sizing. ``conv`` because the game is gridded; ``mlp`` is also
+# supported but checkpoints are architecture-specific.
 network:
   architecture: "conv"
   latent_dim: 64
   hidden_dim: 128
 
+# u-MCTS over learned latents.
 mcts:
-  simulations: 25
-  max_depth: 5
-  pb_c_base: 19652
+  simulations: 25            # search budget per real step during self-play
+  max_depth: 5               # tree-depth bound (cheap CPU defaults)
+  pb_c_base: 19652           # PUCT scaling — standard MuZero values
   pb_c_init: 1.25
-  dirichlet_alpha: 0.3
-  exploration_fraction: 0.1
-  temperature: 0.5
+  dirichlet_alpha: 0.3       # root noise strength
+  exploration_fraction: 0.1  # weight of Dirichlet noise vs network priors
+  temperature: 0.5           # visit-count -> policy distribution sharpening
 
 training:
   seed: 7
   episodes: 120
-  bootstrap_episodes: 20
-  bootstrap_gradient_steps: 80
-  bootstrap_policy: "heuristic"
-  train_after_episodes: 4
+  bootstrap_episodes: 20            # warm-up rollouts before MuZero self-play
+  bootstrap_gradient_steps: 80      # supervised steps right after the warm-up
+  bootstrap_policy: "heuristic"     # use the simple paddle-tracking baseline
+  train_after_episodes: 4           # delay first gradient step until buffer is warm
   train_every: 1
-  gradient_steps: 8
+  gradient_steps: 8                 # gradient steps per training episode
   batch_size: 32
   buffer_size: 500
-  unroll_steps: 4
+  unroll_steps: 4                   # BPTT depth in the dynamics network
   discount: 0.95
   learning_rate: 0.001
   weight_decay: 0.0001
-  value_loss_weight: 0.5
+  value_loss_weight: 0.5            # loss combination (policy is the dominant signal)
   reward_loss_weight: 1.0
   policy_loss_weight: 2.0
-  search_value_target_weight: 0.5
+  search_value_target_weight: 0.5   # blend: 0.5 * return + 0.5 * MCTS root value
   gradient_clip: 5.0
   eval_every: 20
   eval_episodes: 20

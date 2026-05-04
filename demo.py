@@ -1,3 +1,5 @@
+"""Top-level entry point: render gameplay frames, contact sheets, GIFs, and the MCTS root diagram."""
+
 from __future__ import annotations
 
 from script_utils import run_cli_command

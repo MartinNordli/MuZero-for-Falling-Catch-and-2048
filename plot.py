@@ -1,3 +1,5 @@
+"""Top-level entry point: regenerate plots from a saved ``training_metrics.json`` file."""
+
 from __future__ import annotations
 
 from script_utils import run_cli_command

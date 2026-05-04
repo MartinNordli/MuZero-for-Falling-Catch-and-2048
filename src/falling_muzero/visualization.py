@@ -1,3 +1,15 @@
+"""Plot, demo-frame, and GIF rendering used by the ``plot`` and ``demo`` CLI commands.
+
+This module owns every artefact under ``artifacts/<preset>/plots/`` and
+``artifacts/<preset>/demo/``: training-reward / loss / 2048-score plots, demo
+frames, contact sheets, animated GIFs, and the small MCTS root-policy
+diagram used in the slide deck.
+
+The matplotlib config and font cache are redirected to ``artifacts/.mplconfig``
+and ``artifacts/.cache`` so a fresh checkout never writes into the user's
+home directory.
+"""
+
 from __future__ import annotations
 
 import json
@@ -30,11 +42,21 @@ _FONT_CANDIDATES = (
 
 
 def load_metrics(path: str | Path) -> dict[str, list[float | int | None]]:
+    """Load a ``training_metrics.json`` file produced by :class:`falling_muzero.trainer.Trainer`."""
+
     with Path(path).open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def save_training_plots(metrics: dict[str, list[float | int | None]], plots_dir: str | Path) -> list[Path]:
+    """Render every relevant plot for the metrics dict into ``plots_dir``.
+
+    Which plots are produced depends on which keys are populated: Falling
+    Catch metrics generate miss-percentage / heuristic-agreement plots; 2048
+    metrics generate score / max-tile / survival / performance-summary plots;
+    reward and loss curves are always emitted.
+    """
+
     target_dir = Path(plots_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     outputs = [
@@ -85,6 +107,13 @@ def save_demo_frames(
     demo_dir: str | Path,
     max_frames: int = 16,
 ) -> list[Path]:
+    """Save individual demo frames + a contact-sheet image under ``demo_dir/frames``.
+
+    Frame timing is corrected for Falling Catch by
+    :func:`display_observations_for_episode` so that the GIF visibly shows
+    the paddle moving *before* a bottom-row catch is scored.
+    """
+
     target_dir = Path(demo_dir)
     frames_dir = target_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
@@ -134,6 +163,8 @@ def save_demo_gif(
     duration_ms: int = 180,
     final_pause_ms: int = 1400,
 ) -> Path:
+    """Write an animated GIF of ``observations``, holding ``final_pause_ms`` on the last frame."""
+
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     if not observations:
@@ -159,6 +190,8 @@ def save_demo_gif(
 
 
 def save_mcts_diagram(policy: np.ndarray, path: str | Path, action_names: tuple[str, ...] | None = None) -> Path:
+    """Render the small "root + action priors" diagram used in slide 8 of the deck."""
+
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     actions = action_names or tuple(f"a{i}" for i in range(len(policy)))
@@ -194,6 +227,8 @@ def save_mcts_diagram(policy: np.ndarray, path: str | Path, action_names: tuple[
 
 
 def _save_reward_plot(metrics: dict[str, list[float | int | None]], path: Path) -> Path:
+    """Per-episode training reward plus actor / random / heuristic evaluation rewards."""
+
     episodes = np.asarray(metrics["episode"], dtype=np.float32)
     train_reward = np.asarray(metrics["train_reward"], dtype=np.float32)
     fig, ax = plt.subplots(figsize=(8, 4.5))
@@ -229,6 +264,9 @@ def _save_reward_plot(metrics: dict[str, list[float | int | None]], path: Path) 
 
 
 def _save_score_plot(metrics: dict[str, list[float | int | None]], path: Path) -> Path:
+    """2048 raw score progression (training rollouts + actor / heuristic eval lines)."""
+
+
     episodes = np.asarray(metrics["episode"], dtype=np.float32)
     fig, ax = plt.subplots(figsize=(8, 4.5))
     _plot_sparse_metric(ax, episodes, metrics.get("train_score", []), "#9aa0a6", "self-play episode after updates", alpha=0.35, linewidth=1.3)
@@ -249,6 +287,9 @@ def _save_score_plot(metrics: dict[str, list[float | int | None]], path: Path) -
 
 
 def _save_max_tile_plot(metrics: dict[str, list[float | int | None]], path: Path) -> Path:
+    """2048 max-tile-reached progression with a 1024 reference line."""
+
+
     episodes = np.asarray(metrics["episode"], dtype=np.float32)
     fig, ax = plt.subplots(figsize=(8, 4.5))
     _plot_sparse_metric(ax, episodes, metrics.get("train_max_tile", []), "#9aa0a6", "self-play episode after updates", alpha=0.35, linewidth=1.3)
@@ -270,6 +311,9 @@ def _save_max_tile_plot(metrics: dict[str, list[float | int | None]], path: Path
 
 
 def _save_survival_plot(metrics: dict[str, list[float | int | None]], path: Path) -> Path:
+    """2048 survival-steps-per-episode plot."""
+
+
     episodes = np.asarray(metrics["episode"], dtype=np.float32)
     fig, ax = plt.subplots(figsize=(8, 4.5))
     _plot_sparse_metric(ax, episodes, metrics.get("train_steps", []), "#9aa0a6", "self-play episode after updates", alpha=0.35, linewidth=1.3)
@@ -290,6 +334,9 @@ def _save_survival_plot(metrics: dict[str, list[float | int | None]], path: Path
 
 
 def _save_2048_summary_plot(metrics: dict[str, list[float | int | None]], path: Path) -> Path:
+    """Single-figure 2048 summary: actor / random / heuristic across reward, score, max tile, steps."""
+
+
     groups = [
         ("Best actor", "best_actor_eval", "#1f8f4d"),
         ("Current actor", "actor_eval", "#f2994a"),
@@ -330,6 +377,9 @@ def _save_2048_summary_plot(metrics: dict[str, list[float | int | None]], path: 
 
 
 def _save_loss_plot(metrics: dict[str, list[float | int | None]], path: Path) -> Path:
+    """Policy / value / reward / total loss curves over training."""
+
+
     episodes = np.asarray(metrics["episode"], dtype=np.float32)
     fig, ax = plt.subplots(figsize=(8, 4.5))
     for key, color, label in [
@@ -355,6 +405,8 @@ def _save_miss_percentage_plot(
     path: Path,
     include_self_play: bool = True,
 ) -> Path:
+    """Falling Catch miss-percentage plot. ``include_self_play=False`` is the eval-only variant."""
+
     episodes = np.asarray(metrics["episode"], dtype=np.float32)
     fig, ax = plt.subplots(figsize=(8, 4.5))
     if include_self_play:
@@ -397,6 +449,8 @@ def _save_heuristic_agreement_plot(
     path: Path,
     include_self_play: bool = True,
 ) -> Path:
+    """Per-step rate at which the actor agrees with the simple paddle-tracking heuristic."""
+
     episodes = np.asarray(metrics["episode"], dtype=np.float32)
     fig, ax = plt.subplots(figsize=(8, 4.5))
     if include_self_play:
@@ -447,6 +501,9 @@ def _save_heuristic_agreement_plot(
 
 
 def _save_falling_catch_summary_plot(metrics: dict[str, list[float | int | None]], path: Path) -> Path:
+    """Single-figure Falling Catch summary: reward, miss%, catches, heuristic agreement."""
+
+
     groups = [
         ("Best actor", "best_actor_eval", "#1f8f4d"),
         ("Current actor", "actor_eval", "#27ae60"),

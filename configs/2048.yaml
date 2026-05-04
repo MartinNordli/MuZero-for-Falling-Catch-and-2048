@@ -1,19 +1,32 @@
+# 2048 — harder deterministic extension.
+#
+# 4x4 sliding-tile game. Tiles are stored as exponents (0=empty, 1=2, 2=4, …).
+# A new tile spawns deterministically after every legal swipe so the search
+# tree stays a normal action tree (no stochastic chance nodes). The 2048
+# heuristic is intentionally NOT in the warm-up — we keep it as an evaluation
+# baseline so a learned actor cannot trivially imitate it. Outputs go to
+# artifacts/2048/.
+
 game:
   kind: "2048"
   size: 4
-  episode_length: 1200
+  episode_length: 1200          # 2048 episodes can run for hundreds of moves
   history_length: 4
   spawn_seed: 11
-  max_tile_exponent: 11
-  invalid_move_penalty: -0.15
-  merge_reward_scale: 128.0
-  heuristic_search_depth: 2
+  max_tile_exponent: 11         # cap at 2048 (=2^11)
+  invalid_move_penalty: -0.15   # discourage spamming illegal swipes
+  merge_reward_scale: 128.0     # scales merge values into a tighter reward range
+  heuristic_search_depth: 2     # 2-ply look-ahead inside the eval-only heuristic
 
+# Wider net — 2048 has more state than Falling Catch.
 network:
   architecture: "conv"
   latent_dim: 96
   hidden_dim: 160
 
+# Shallow search with low exploration: deeper learned-model rollouts were
+# unstable on this small CPU implementation because dynamics errors compound
+# quickly. The replay/prioritisation does most of the lifting.
 mcts:
   simulations: 20
   max_depth: 1
@@ -29,16 +42,16 @@ training:
   bootstrap_episodes: 40
   bootstrap_imitation_steps: 0
   bootstrap_gradient_steps: 120
-  bootstrap_policy: "random"
+  bootstrap_policy: "random"            # NOT the heuristic — see module note above
   train_after_episodes: 4
   train_every: 1
   gradient_steps: 4
   batch_size: 64
   buffer_size: 900
-  replay_priority_alpha: 0.8
+  replay_priority_alpha: 0.8            # reward-weighted prioritised replay
   replay_priority_epsilon: 0.001
   unroll_steps: 5
-  discount: 0.98
+  discount: 0.98                        # longer-horizon returns than catch
   learning_rate: 0.0005
   weight_decay: 0.0001
   value_loss_weight: 0.5
@@ -47,7 +60,7 @@ training:
   search_value_target_weight: 0.5
   gradient_clip: 5.0
   eval_every: 25
-  eval_episodes: 5
+  eval_episodes: 5                      # 2048 evaluations are slow; fewer episodes
   mcts_eval_episodes: 1
   checkpoint_path: "artifacts/2048/checkpoints/best.pt"
   final_checkpoint_path: "artifacts/2048/checkpoints/final.pt"

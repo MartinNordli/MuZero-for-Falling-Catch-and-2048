@@ -1,3 +1,11 @@
+"""Argparse CLI exposing ``train``, ``evaluate``, ``demo``, ``plot``, and ``smoke-test``.
+
+Each subcommand drives a single shared :class:`falling_muzero.trainer.Trainer`
+loaded from a YAML preset. The top-level wrappers ``train.py``, ``evaluate.py``
+etc. delegate here through :mod:`script_utils`, so the same code path runs
+whether the user invokes the package as a module or as a console script.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -18,6 +26,8 @@ from falling_muzero.visualization import (
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse arguments and dispatch to the chosen subcommand. Returns a process exit code."""
+
     parser = argparse.ArgumentParser(description="MuZero grid games")
     parser.add_argument("--config", default="configs/default.yaml", help="Path to the YAML config file.")
     parser.add_argument("--game", choices=["catch", "2048"], default=None, help="Game to run. Defaults to config value.")
@@ -135,6 +145,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _apply_command_defaults(args: argparse.Namespace, config) -> None:
+    """Fill in game-aware defaults for the ``demo`` subcommand.
+
+    2048 demos default to longer, faster GIFs (because games run for hundreds
+    of moves) and a longer pause at the end. Falling Catch demos default to
+    short, slow GIFs that show every move clearly.
+    """
+
     if args.command != "demo":
         return
     game_kind = config.game.kind
@@ -151,12 +168,16 @@ def _apply_command_defaults(args: argparse.Namespace, config) -> None:
 
 
 def _config_path_for_args(args: argparse.Namespace) -> str:
+    """Auto-redirect ``--game 2048`` to the 2048 config when the default catch one was passed."""
+
     if args.game == "2048" and args.config == "configs/default.yaml":
         return "configs/2048.yaml"
     return args.config
 
 
 def _require_checkpoint_for_learned_mode(config, checkpoint: str | None, mode: PolicyMode) -> None:
+    """Raise a helpful ``FileNotFoundError`` if the user asked for a learned mode without training first."""
+
     if mode in {"random", "heuristic"}:
         return
     path = Path(checkpoint or config.training.checkpoint_path)
@@ -168,12 +189,16 @@ def _require_checkpoint_for_learned_mode(config, checkpoint: str | None, mode: P
 
 
 def _trainer_for_mode(config, checkpoint: str | None, mode: PolicyMode) -> Trainer:
+    """Return a trainer with weights loaded for learned modes; a fresh trainer otherwise."""
+
     if mode in {"random", "heuristic"}:
         return Trainer(config)
     return load_trainer_with_checkpoint(config, checkpoint)
 
 
 def _overrides_from_args(args: argparse.Namespace) -> dict:
+    """Convert the small set of CLI flags (``--game``, ``--episodes``, ``--simulations``) into a config override dict."""
+
     overrides: dict = {}
     if getattr(args, "game", None) is not None:
         overrides.setdefault("game", {})["kind"] = args.game
@@ -185,6 +210,13 @@ def _overrides_from_args(args: argparse.Namespace) -> dict:
 
 
 def _smoke_test(config_path: str, game_kind: str) -> int:
+    """Tiny end-to-end pass that trains, checkpoints, evaluates, and writes a demo GIF.
+
+    Used by ``smoke_test.py`` and the smoke test suite to confirm the full
+    pipeline still works after changes — much smaller settings than a real
+    training run.
+    """
+
     game_overrides = {
         "catch": {
             "kind": "catch",

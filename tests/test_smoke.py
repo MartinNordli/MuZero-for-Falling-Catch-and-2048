@@ -1,3 +1,5 @@
+"""End-to-end smoke runs for both games — train, checkpoint, evaluate, and plot in under a minute."""
+
 from pathlib import Path
 
 from falling_muzero.config import load_config
